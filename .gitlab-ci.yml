@@ -1,0 +1,97 @@
+image: python:latest
+
+variables:
+  AWS_DEFAULT_REGION: eu-west-1
+
+stages:
+- build
+- deploy
+
+
+build:
+  stage: build
+  image: node:10
+  script:
+    - >
+      if [ "${CI_COMMIT_REF_NAME}" == "master" ]; then
+        export VUE_APP_API_BASE_URL="https://api.onvp.io/api"
+        export NODE_ENV="development"
+      else
+        export VUE_APP_API_BASE_URL="https://staging-api.onvp.io/api"
+        export NODE_ENV="development"
+      fi
+    - >
+      if [ "${CI_COMMIT_REF_NAME}" != "master" ] && [ "${CI_COMMIT_REF_NAME}" != "develop" ]; then
+        export VUE_APP_PUBLIC_PATH="/${CI_COMMIT_REF_NAME}"
+      else
+        export VUE_APP_PUBLIC_PATH="/"
+      fi
+    - export VUE_APP_APP_VERSION=$CI_COMMIT_SHORT_SHA
+    - npm install
+    - npm run build
+  artifacts:
+    paths:
+      - dist
+
+deploy_feature:
+  before_script:
+    - pip install awscli
+  stage: deploy
+  dependencies:
+    - build
+  script:
+    - cd dist
+    - aws s3 cp . s3://onvp-app-environment/${CI_COMMIT_REF_NAME} --recursive
+  except:
+    - develop
+    - master
+  environment:
+    name: feature/${CI_COMMIT_REF_NAME}
+    url: http://onvp-app-environment.s3-website-${AWS_DEFAULT_REGION}.amazonaws.com/${CI_COMMIT_REF_NAME}
+    on_stop: clean_up_feature_branch
+
+clean_up_feature_branch:
+  before_script:
+    - pip install awscli
+  stage: deploy
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - aws s3 rm s3://onvp-app-environment/${CI_COMMIT_REF_NAME} --recursive
+  when: manual
+  except: 
+    - develop
+    - master
+  environment:
+    name: feature/${CI_COMMIT_REF_NAME}
+    action: stop
+
+deploy_staging:
+  before_script:
+    - pip install awscli
+  stage: deploy
+  dependencies:
+    - build
+  script:
+    - cd dist
+    - aws s3 cp . s3://onvp-app-staging --recursive
+  only:
+    - develop
+  environment:
+    name: staging
+    url: http://onvp-app-staging.s3-website-${AWS_DEFAULT_REGION}.amazonaws.com
+
+deploy_production:
+  before_script:
+    - pip install awscli
+  stage: deploy
+  dependencies:
+    - build
+  script:
+    - cd dist
+    - aws s3 cp . s3://onvp-app-production --recursive
+  only:
+    - master
+  environment:
+    name: production
+    url: http://onvp-app-production.s3-website-${AWS_DEFAULT_REGION}.amazonaws.com
